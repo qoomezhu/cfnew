@@ -291,9 +291,7 @@ async function openByAttempt(attempt, runtimeConfig) {
 
 export async function handleWebSocketTunnel(request, context, config) {
   const runtimeConfig = buildRuntimeConfig(request, config);
-  const pair = new WebSocketPair();
-  const client = pair[0];
-  const server = pair[1];
+  const { 0: client, 1: server } = new WebSocketPair();
   server.accept();
 
   let remoteSocket = null;
