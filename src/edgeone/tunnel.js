@@ -1,9 +1,9 @@
 import net from 'node:net';
 import { detectRegion, parseAddressAndPort, pickBackupEndpoint, isValidUUID } from './utils.js';
 
-const ADDRESS_TYPE_IPV4 = 1;
-const ADDRESS_TYPE_DOMAIN = 2;
-const ADDRESS_TYPE_IPV6 = 3;
+export const ADDRESS_TYPE_IPV4 = 1;
+export const ADDRESS_TYPE_DOMAIN = 2;
+export const ADDRESS_TYPE_IPV6 = 3;
 const hexTable = Array.from({ length: 256 }, (_, i) => (i + 256).toString(16).slice(1));
 
 function decodeBase64UrlToUint8Array(input) {
@@ -17,7 +17,7 @@ function decodeBase64UrlToUint8Array(input) {
   }
 }
 
-function concatUint8Arrays(a, b) {
+export function concatUint8Arrays(a, b) {
   const left = a instanceof Uint8Array ? a : new Uint8Array(a);
   const right = b instanceof Uint8Array ? b : new Uint8Array(b);
   const result = new Uint8Array(left.length + right.length);
@@ -26,7 +26,7 @@ function concatUint8Arrays(a, b) {
   return result;
 }
 
-async function toUint8Array(data) {
+export async function toUint8Array(data) {
   if (data == null) return new Uint8Array();
   if (data instanceof Uint8Array) return data;
   if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
@@ -52,7 +52,7 @@ function formatIdentifier(arr, offset = 0) {
   return id;
 }
 
-function parseVlessHeader(chunk, expectedUserId) {
+export function parseVlessHeader(chunk, expectedUserId) {
   if (!(chunk instanceof Uint8Array)) chunk = new Uint8Array(chunk);
   if (chunk.byteLength < 24) throw new Error('invalid data');
 
@@ -95,6 +95,7 @@ function parseVlessHeader(chunk, expectedUserId) {
     port,
     host,
     rawData: chunk.slice(addressIndex),
+    addressType,
   };
 }
 
@@ -146,7 +147,7 @@ function readOnce(socket, timeoutMs = 10000) {
   });
 }
 
-function connectDirect(host, port, timeoutMs = 8000) {
+export function connectDirect(host, port, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const socket = net.connect({ host, port: Number(port) });
     const onError = (error) => {
@@ -168,7 +169,7 @@ function connectDirect(host, port, timeoutMs = 8000) {
   });
 }
 
-async function connectViaSocks5(socks, targetHost, targetPort) {
+export async function connectViaSocks5(socks, targetHost, targetPort) {
   const socket = await connectDirect(socks.host, socks.port);
 
   const methods = [0x00];
@@ -221,7 +222,7 @@ async function connectViaSocks5(socks, targetHost, targetPort) {
   return socket;
 }
 
-function buildRuntimeConfig(request, config) {
+export function buildRuntimeConfig(request, config) {
   const url = new URL(request.url);
   const search = url.searchParams;
   const proxyOverrideRaw = search.get('p') || config.p || '';
@@ -241,7 +242,7 @@ function buildRuntimeConfig(request, config) {
   };
 }
 
-function buildAttempts(targetHost, targetPort, runtimeConfig) {
+export function buildAttempts(targetHost, targetPort, runtimeConfig) {
   const attempts = [];
   const seen = new Set();
 
@@ -282,11 +283,29 @@ function buildAttempts(targetHost, targetPort, runtimeConfig) {
   return attempts;
 }
 
-async function openByAttempt(attempt, runtimeConfig) {
+export async function openByAttempt(attempt, runtimeConfig) {
   if (attempt.mode === 'socks') {
     return connectViaSocks5(runtimeConfig.socks, attempt.host, attempt.port);
   }
   return connectDirect(attempt.host, attempt.port);
+}
+
+export async function connectTargetWithFallback(targetHost, targetPort, initialData, runtimeConfig) {
+  const attempts = buildAttempts(targetHost, targetPort, runtimeConfig);
+  let lastError = null;
+
+  for (const attempt of attempts) {
+    try {
+      const socket = await openByAttempt(attempt, runtimeConfig);
+      if (initialData?.length) socket.write(Buffer.from(initialData));
+      return { socket, attempt };
+    } catch (error) {
+      lastError = error;
+      console.error(`connect attempt failed [${attempt.label}] ${attempt.host}:${attempt.port}`, error);
+    }
+  }
+
+  throw lastError || new Error('所有连接尝试均失败');
 }
 
 export async function handleWebSocketTunnel(request, context, config) {
@@ -351,22 +370,8 @@ export async function handleWebSocketTunnel(request, context, config) {
   };
 
   const establishConnection = async (targetHost, targetPort, initialData) => {
-    const attempts = buildAttempts(targetHost, targetPort, runtimeConfig);
-    let lastError = null;
-
-    for (const attempt of attempts) {
-      try {
-        const socket = await openByAttempt(attempt, runtimeConfig);
-        bindRemoteSocket(socket);
-        if (initialData?.length) socket.write(Buffer.from(initialData));
-        return;
-      } catch (error) {
-        lastError = error;
-        console.error(`connect attempt failed [${attempt.label}] ${attempt.host}:${attempt.port}`, error);
-      }
-    }
-
-    throw lastError || new Error('所有连接尝试均失败');
+    const connected = await connectTargetWithFallback(targetHost, targetPort, initialData, runtimeConfig);
+    bindRemoteSocket(connected.socket);
   };
 
   const processChunk = async (chunk) => {

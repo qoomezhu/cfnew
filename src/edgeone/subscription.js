@@ -18,6 +18,10 @@ function buildWsPath(config) {
   return `/?${params.toString()}`;
 }
 
+function buildXhttpPath(config) {
+  return `/${String(config.u || '').replace(/-/g, '').slice(0, 8)}`;
+}
+
 function toName(sourceName, port, protoLabel) {
   return `${sourceName}-${port}-${protoLabel}`;
 }
@@ -53,6 +57,23 @@ function buildTrojanLink(endpoint, config, workerDomain) {
   const host = wrapHostForUrl(endpoint.host);
   const name = encodeURIComponent(toName(endpoint.name, endpoint.port, 'Trojan-WS-TLS'));
   return `trojan://${password}@${host}:${endpoint.port}?${params.toString()}#${name}`;
+}
+
+function buildXhttpLink(endpoint, config, workerDomain) {
+  const host = wrapHostForUrl(endpoint.host);
+  const name = encodeURIComponent(toName(endpoint.name, endpoint.port, 'VLESS-xhttp-TLS'));
+  const params = new URLSearchParams({
+    encryption: 'none',
+    security: 'tls',
+    type: 'xhttp',
+    host: workerDomain,
+    sni: workerDomain,
+    fp: 'chrome',
+    mode: 'stream-one',
+    path: buildXhttpPath(config),
+    alpn: 'h3,h2,http/1.1',
+  });
+  return `vless://${config.u}@${host}:${endpoint.port}?${params.toString()}#${name}`;
 }
 
 async function fetchRemotePreferredList(url) {
@@ -107,6 +128,9 @@ export async function generateBase64Subscription(request, context, config) {
     if (isEnabled(config.et, false)) {
       links.push(buildTrojanLink(endpoint, config, workerDomain));
     }
+    if (isEnabled(config.ex, false)) {
+      links.push(buildXhttpLink(endpoint, config, workerDomain));
+    }
   }
 
   if (!links.length) {
@@ -128,6 +152,7 @@ export function buildClientLinks(request, config) {
   return {
     raw: baseSubUrl,
     converterBase,
+    xhttpPath: buildXhttpPath(config),
     clients: {
       base64: baseSubUrl,
       clash: makeConverter('clash'),

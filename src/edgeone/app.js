@@ -15,6 +15,7 @@ import {
   dedupeEndpoints,
 } from './utils.js';
 import { handleWebSocketTunnel } from './tunnel.js';
+import { handleXhttpRequest } from './xhttp.js';
 
 async function readJsonBody(request) {
   try {
@@ -248,6 +249,17 @@ export async function handleRequest(context) {
     }
 
     return withRequestId(textResponse('Method Not Allowed', 405), requestId);
+  }
+
+  if (request.method === 'POST' && isEnabled(config.ex, false) && !pathname.includes('/api/')) {
+    try {
+      return withRequestId(await handleXhttpRequest(request, context, config), requestId);
+    } catch (error) {
+      return withRequestId(jsonResponse({
+        error: 'xhttp_error',
+        message: error.message || 'xhttp 处理失败',
+      }, 400), requestId);
+    }
   }
 
   if (config.d) {
