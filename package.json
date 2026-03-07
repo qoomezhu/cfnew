@@ -1,0 +1,14 @@
+{
+  "name": "cfnew-edgeone",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "EdgeOne Pages Node Functions migration for cfnew",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "edgeone pages dev",
+    "deploy": "echo \"Deploy this branch with EdgeOne Pages\""
+  }
+}
