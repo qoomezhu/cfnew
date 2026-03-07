@@ -30,6 +30,24 @@
 
 ---
 
+## A 阶段已补强内容
+
+### 已新增
+- 更完整的管理页
+- `GET /{路径}/api/status` 状态诊断接口
+- 配置保存前校验
+- 请求 ID 响应头 `x-request-id`
+- 部署专用 `edgeone.json`
+- `.env.edgeone.example`
+
+### 当前故意不做伪实现
+- xhttp：若只生成订阅但服务端未完整兼容，会是伪实现
+- ECH：若未真正补齐获取/缓存/下发链路，也会是伪实现
+
+所以这个分支的原则是：**先交付 EdgeOne 上真实可跑的能力，再继续迭代协议层。**
+
+---
+
 ## 当前分支已实现的能力
 
 ### 已实现
@@ -37,6 +55,7 @@
 - `GET /{UUID或自定义路径}` 管理页
 - `GET /{UUID或自定义路径}/sub` Base64 订阅
 - `GET/PUT /{路径}/api/config` 配置读写
+- `GET /{路径}/api/status` 状态诊断
 - `GET/POST/DELETE /{路径}/api/preferred-ips` 优选列表管理
 - `WS /?ed=2048` 隧道入口
 - `p` 覆盖 ProxyIP
@@ -80,6 +99,10 @@
 | `qj` | 设为 `no` 启用 direct -> SOCKS -> fallback |
 | `doh` | DoH 地址，默认 `https://dns.google/dns-query` |
 
+也可直接参考仓库根目录：
+
+- `.env.edgeone.example`
+
 ### 4. 访问路径
 假设你的 Pages 域名是：
 
@@ -104,6 +127,18 @@
 - 打开 WebSocket 支持
 - 不要缓存 `/{路径}/sub`
 - 不要缓存 WS 入口
+
+### 6. edgeone.json
+根目录已新增：
+
+- `edgeone.json`
+
+当前包含：
+- `nodeVersion`
+- `installCommand`
+- `nodeFunctionsConfig.maxDuration`
+- 订阅路径 no-store 响应头
+- 基础安全响应头
 
 ---
 
@@ -138,6 +173,11 @@ curl -X PUT "https://your-domain/{UUID或路径}/api/config" \
     "qj": "no",
     "doh": "https://dns.google/dns-query"
   }'
+```
+
+### 查看运行状态
+```bash
+curl "https://your-domain/{UUID或路径}/api/status"
 ```
 
 ---

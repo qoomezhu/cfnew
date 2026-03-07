@@ -2,6 +2,7 @@ import { CONFIG_KEY, kvGetJson, kvPutJson } from './store.js';
 import { isValidUUID, normalizePath } from './utils.js';
 
 const DEFAULT_UUID = '00000000-0000-4000-8000-000000000000';
+const REGION_CODES = ['US', 'SG', 'JP', 'HK', 'KR', 'DE', 'SE', 'NL', 'FI', 'GB'];
 
 const allowedKeys = [
   'u', 'p', 's', 'd', 'wk',
@@ -60,6 +61,31 @@ function buildEnvConfig(context) {
   return envConfig;
 }
 
+export function validateConfigPayload(payload = {}) {
+  const errors = [];
+  if (payload.u != null && payload.u !== '' && !isValidUUID(payload.u)) {
+    errors.push('u 必须是合法 UUID');
+  }
+  if (payload.wk != null && payload.wk !== '') {
+    const wk = String(payload.wk).trim().toUpperCase();
+    if (!REGION_CODES.includes(wk)) {
+      errors.push(`wk 仅支持：${REGION_CODES.join(', ')}`);
+    }
+  }
+  if (payload.doh != null && payload.doh !== '') {
+    try {
+      const url = new URL(String(payload.doh));
+      if (!/^https?:$/.test(url.protocol)) throw new Error('bad protocol');
+    } catch {
+      errors.push('doh 必须是合法的 http/https URL');
+    }
+  }
+  if (payload.d != null && payload.d !== '' && String(payload.d).trim() === '/') {
+    errors.push('d 不能仅为 /');
+  }
+  return errors;
+}
+
 export async function loadConfig(context) {
   const envConfig = buildEnvConfig(context);
   const storedConfig = await kvGetJson(context, CONFIG_KEY, {});
@@ -67,6 +93,13 @@ export async function loadConfig(context) {
 }
 
 export async function saveConfig(context, payload) {
+  const errors = validateConfigPayload(payload || {});
+  if (errors.length) {
+    const error = new Error(errors.join('；'));
+    error.validationErrors = errors;
+    throw error;
+  }
+
   const current = await loadConfig(context);
   const next = { ...current };
   for (const key of allowedKeys) {
