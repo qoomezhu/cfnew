@@ -116,3 +116,30 @@ export async function generateBase64Subscription(request, context, config) {
 
   return btoa(links.join('\n'));
 }
+
+export function buildClientLinks(request, config) {
+  const url = new URL(request.url);
+  const routeBase = config.d ? config.d : `/${config.u}`;
+  const baseSubUrl = `${url.origin}${routeBase}/sub`;
+  const converterBase = config.scu || 'https://url.v1.mk/sub';
+
+  const makeConverter = (target) => `${converterBase}?target=${encodeURIComponent(target)}&url=${encodeURIComponent(baseSubUrl)}&insert=false`;
+
+  return {
+    raw: baseSubUrl,
+    converterBase,
+    clients: {
+      base64: baseSubUrl,
+      clash: makeConverter('clash'),
+      surge: makeConverter('surge'),
+      singbox: makeConverter('singbox'),
+      loon: makeConverter('loon'),
+      quanx: makeConverter('quanx'),
+      stash: makeConverter('clash'),
+      v2ray: baseSubUrl,
+      shadowrocket: `shadowrocket://add/${encodeURIComponent(baseSubUrl)}`,
+      v2rayng: `v2rayng://install?url=${encodeURIComponent(baseSubUrl)}`,
+      nekoray: `nekoray://install-config?url=${encodeURIComponent(baseSubUrl)}`,
+    },
+  };
+}

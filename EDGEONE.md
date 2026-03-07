@@ -37,6 +37,8 @@
 - `GET /{路径}/api/status` 状态诊断接口
 - 配置保存前校验
 - 请求 ID 响应头 `x-request-id`
+- 客户端快速链接接口 `GET /{路径}/api/clients`
+- 配置导入/导出接口
 - 部署专用 `edgeone.json`
 - `.env.edgeone.example`
 
@@ -56,6 +58,9 @@
 - `GET /{UUID或自定义路径}/sub` Base64 订阅
 - `GET/PUT /{路径}/api/config` 配置读写
 - `GET /{路径}/api/status` 状态诊断
+- `GET /{路径}/api/clients` 客户端快速链接
+- `GET /{路径}/api/export` 导出配置与优选列表
+- `POST /{路径}/api/import` 导入配置与优选列表
 - `GET/POST/DELETE /{路径}/api/preferred-ips` 优选列表管理
 - `WS /?ed=2048` 隧道入口
 - `p` 覆盖 ProxyIP
@@ -98,6 +103,7 @@
 | `ae` | 是否允许 API 管理优选 IP，默认 `no` |
 | `qj` | 设为 `no` 启用 direct -> SOCKS -> fallback |
 | `doh` | DoH 地址，默认 `https://dns.google/dns-query` |
+| `scu` | 订阅转换服务，默认 `https://url.v1.mk/sub` |
 
 也可直接参考仓库根目录：
 
@@ -180,6 +186,28 @@ curl -X PUT "https://your-domain/{UUID或路径}/api/config" \
 curl "https://your-domain/{UUID或路径}/api/status"
 ```
 
+### 查看客户端链接
+```bash
+curl "https://your-domain/{UUID或路径}/api/clients"
+```
+
+### 导出配置与优选列表
+```bash
+curl "https://your-domain/{UUID或路径}/api/export"
+```
+
+### 导入配置与优选列表
+```bash
+curl -X POST "https://your-domain/{UUID或路径}/api/import" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "config": {"et": "yes", "qj": "no"},
+    "preferredIPs": [
+      {"host": "1.1.1.1", "port": 443, "name": "节点1"}
+    ]
+  }'
+```
+
 ---
 
 ## 与原 Cloudflare 版的关键差异
@@ -214,7 +242,8 @@ curl "https://your-domain/{UUID或路径}/api/status"
 3. 打开管理页确认配置读写正常
 4. 再开启 `ae=yes`
 5. 再加 `qj=no` 和 `s=` 做降级
-6. 最后再上自定义域名
+6. 再验证 `api/clients` 和 `api/export`
+7. 最后再上自定义域名
 
 ---
 
@@ -227,5 +256,6 @@ curl "https://your-domain/{UUID或路径}/api/status"
 - 能用 KV
 - 能提供订阅
 - 能跑 WebSocket 隧道
+- 能做基础运维与备份恢复
 
 的 **第一版可部署 EdgeOne 实现**。

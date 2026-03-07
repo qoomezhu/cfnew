@@ -89,6 +89,7 @@ export function renderDashboard(request, config) {
     .err { color: #ef4444; }
     .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #1e293b; color: #cbd5e1; margin: 0 8px 8px 0; }
     .full { grid-column: 1 / -1; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
   </style>
 </head>
 <body>
@@ -117,6 +118,11 @@ WebSocket：${url.origin}/?ed=2048</pre>
       </section>
 
       <section class="card full">
+        <h2>客户端快速链接</h2>
+        <div id="clientsBox" class="muted">正在生成客户端链接…</div>
+      </section>
+
+      <section class="card full">
         <h2>配置 JSON</h2>
         <div class="muted">可直接编辑后保存。常用字段：<code>u</code>、<code>d</code>、<code>p</code>、<code>s</code>、<code>wk</code>、<code>ev</code>、<code>et</code>、<code>yx</code>、<code>yxURL</code>、<code>ae</code>、<code>qj</code>、<code>doh</code>。</div>
         <textarea id="configBox">${configJson}</textarea>
@@ -138,6 +144,17 @@ WebSocket：${url.origin}/?ed=2048</pre>
       </section>
 
       <section class="card full">
+        <h2>配置导入 / 导出</h2>
+        <div class="muted">这里导出的 JSON 包含当前配置与优选 IP 列表，可用于整站迁移或快速回滚。</div>
+        <textarea id="backupBox" class="small" placeholder="点击“导出当前配置”后会填充 JSON 备份；也可将备份 JSON 粘贴到此处后点击“导入备份”。"></textarea>
+        <div class="row" style="margin-top: 12px;">
+          <button onclick="exportAll()">导出当前配置</button>
+          <button onclick="importAll()">导入备份</button>
+          <button class="secondary" onclick="copyBackup()">复制备份 JSON</button>
+        </div>
+      </section>
+
+      <section class="card full">
         <h2>配置说明</h2>
         <div>
           <span class="pill">u = UUID</span>
@@ -150,6 +167,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
           <span class="pill">ae = API 管理</span>
           <span class="pill">qj = 降级链路</span>
           <span class="pill">doh = DNS over HTTPS</span>
+          <span class="pill">scu = 订阅转换服务</span>
         </div>
         <div class="tips">说明：当前分支优先保证 EdgeOne 平台上的可用性，因此已实现真实可运行的 WebSocket/TCP/KV/DoH 方案；xhttp 与 ECH 需要额外协议链路，当前未做伪实现。</div>
       </section>
@@ -206,6 +224,21 @@ WebSocket：${url.origin}/?ed=2048</pre>
         '<div class="tips" style="margin-top:12px;">请求 ID：<code>' + esc(data.requestId || '-') + '</code></div>';
     }
 
+    function renderClients(data) {
+      const box = document.getElementById('clientsBox');
+      const entries = Object.entries(data.clients || {});
+      box.innerHTML =
+        '<div class="tips">原始订阅：<code>' + esc(data.raw || '') + '</code></div>' +
+        '<div class="tips">转换服务：<code>' + esc(data.converterBase || '') + '</code></div>' +
+        '<table style="margin-top:12px;">' +
+        entries.map(function (entry) {
+          const name = entry[0];
+          const link = entry[1];
+          return '<tr><th>' + esc(name) + '</th><td><div class="mono">' + esc(link) + '</div><div style="margin-top:8px;"><button onclick="copyText(' + JSON.stringify(link) + ')">复制</button></div></td></tr>';
+        }).join('') +
+        '</table>';
+    }
+
     async function reloadStatus() {
       const box = document.getElementById('statusBox');
       box.textContent = '正在加载状态…';
@@ -216,6 +249,19 @@ WebSocket：${url.origin}/?ed=2048</pre>
         renderStatus(data);
       } catch (error) {
         box.innerHTML = '<span class="err">状态获取失败：' + esc(error.message) + '</span>';
+      }
+    }
+
+    async function loadClients() {
+      const box = document.getElementById('clientsBox');
+      box.textContent = '正在生成客户端链接…';
+      try {
+        const response = await fetch(BASE + '/api/clients');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || '客户端链接生成失败');
+        renderClients(data);
+      } catch (error) {
+        box.innerHTML = '<span class="err">客户端链接加载失败：' + esc(error.message) + '</span>';
       }
     }
 
@@ -232,6 +278,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
         alert('配置已保存，若你修改了 u 或 d，请用返回的新路径重新访问。');
         document.getElementById('configBox').value = JSON.stringify(data.config, null, 2);
         reloadStatus();
+        loadClients();
       } catch (error) {
         alert('保存失败：' + error.message);
       }
@@ -282,8 +329,50 @@ WebSocket：${url.origin}/?ed=2048</pre>
       }
     }
 
+    async function exportAll() {
+      try {
+        const response = await fetch(BASE + '/api/export');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || '导出失败');
+        document.getElementById('backupBox').value = JSON.stringify(data, null, 2);
+      } catch (error) {
+        alert('导出失败：' + error.message);
+      }
+    }
+
+    async function importAll() {
+      try {
+        const text = document.getElementById('backupBox').value.trim();
+        if (!text) throw new Error('请先粘贴备份 JSON');
+        const payload = JSON.parse(text);
+        const response = await fetch(BASE + '/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || '导入失败');
+        alert('导入完成');
+        if (data.config) {
+          document.getElementById('configBox').value = JSON.stringify(data.config, null, 2);
+        }
+        loadPreferred();
+        reloadStatus();
+        loadClients();
+      } catch (error) {
+        alert('导入失败：' + error.message);
+      }
+    }
+
+    async function copyBackup() {
+      const text = document.getElementById('backupBox').value;
+      if (!text.trim()) return alert('没有可复制的备份内容');
+      return copyText(text);
+    }
+
     loadPreferred();
     reloadStatus();
+    loadClients();
   </script>
 </body>
 </html>`;

@@ -1,6 +1,6 @@
 import { loadConfig, publicConfig, saveConfig } from './config.js';
 import { renderDashboard, renderHealthPage } from './html.js';
-import { generateBase64Subscription } from './subscription.js';
+import { buildClientLinks, generateBase64Subscription } from './subscription.js';
 import { getKV, kvDelete, kvGetJson, kvPutJson, PREFERRED_IPS_KEY } from './store.js';
 import {
   detectRegion,
@@ -32,6 +32,9 @@ function routeInfo(config) {
     configApiPath: normalizePath(`${routeBase}/api/config`),
     preferredApiPath: normalizePath(`${routeBase}/api/preferred-ips`),
     statusApiPath: normalizePath(`${routeBase}/api/status`),
+    exportApiPath: normalizePath(`${routeBase}/api/export`),
+    importApiPath: normalizePath(`${routeBase}/api/import`),
+    clientsApiPath: normalizePath(`${routeBase}/api/clients`),
   };
 }
 
@@ -55,7 +58,7 @@ function withRequestId(response, requestId) {
   });
 }
 
-function buildStatus(request, config) {
+function buildStatus(request, config, context) {
   const url = new URL(request.url);
   return {
     requestId: getRequestId(request),
@@ -66,7 +69,7 @@ function buildStatus(request, config) {
     proxyIP: config.p || '',
     customPath: config.d || '',
     socksEnabled: Boolean(config.s),
-    kvBound: Boolean(getKV({ request, env: request.env }) || false),
+    kvBound: Boolean(getKV(context)),
     features: {
       vless: isEnabled(config.ev, true),
       trojan: isEnabled(config.et, false),
@@ -75,6 +78,16 @@ function buildStatus(request, config) {
       region_match: isEnabled(config.rm, true),
       fallback_chain: String(config.qj || 'yes').toLowerCase() === 'no',
     },
+  };
+}
+
+async function buildExportPayload(context, config) {
+  const preferredIPs = await kvGetJson(context, PREFERRED_IPS_KEY, []);
+  return {
+    exportedAt: new Date().toISOString(),
+    version: 1,
+    config: publicConfig(config),
+    preferredIPs: Array.isArray(preferredIPs) ? preferredIPs : [],
   };
 }
 
@@ -107,12 +120,43 @@ export async function handleRequest(context) {
   }
 
   if (pathname === routes.statusApiPath && request.method === 'GET') {
-    const kvBound = Boolean(getKV(context));
     return withRequestId(jsonResponse({
-      ...buildStatus(request, config),
+      ...buildStatus(request, config, context),
       requestId,
-      kvBound,
     }), requestId);
+  }
+
+  if (pathname === routes.clientsApiPath && request.method === 'GET') {
+    return withRequestId(jsonResponse(buildClientLinks(request, config)), requestId);
+  }
+
+  if (pathname === routes.exportApiPath && request.method === 'GET') {
+    return withRequestId(jsonResponse(await buildExportPayload(context, config)), requestId);
+  }
+
+  if (pathname === routes.importApiPath && request.method === 'POST') {
+    try {
+      const body = await readJsonBody(request);
+      const nextConfig = body?.config ? await saveConfig(context, body.config) : config;
+      if (Array.isArray(body?.preferredIPs)) {
+        const merged = dedupeEndpoints(body.preferredIPs.map((item) => ({
+          host: item.host || item.ip,
+          port: Number(item.port || 443),
+          name: item.name || `${item.host || item.ip}:${item.port || 443}`,
+        })));
+        await kvPutJson(context, PREFERRED_IPS_KEY, merged);
+      }
+      return withRequestId(jsonResponse({
+        message: '导入完成',
+        routeBase: getRouteBase(nextConfig),
+        config: publicConfig(nextConfig),
+      }), requestId);
+    } catch (error) {
+      return withRequestId(jsonResponse({
+        error: 'import_error',
+        message: error.message || '导入失败',
+      }, 400), requestId);
+    }
   }
 
   if (pathname === routes.configApiPath) {
