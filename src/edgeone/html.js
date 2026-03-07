@@ -146,7 +146,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
         const response = await fetch(BASE + '/api/preferred-ips');
         const data = await response.json();
         if (!response.ok) throw new Error(data.message || '加载失败');
-        const lines = (data.items || []).map((item) => `${item.host}:${item.port}#${item.name || ''}`.replace(/#$/, ''));
+        const lines = (data.items || []).map((item) => item.host + ':' + item.port + (item.name ? '#' + item.name : ''));
         document.getElementById('preferredBox').value = lines.join('\n');
       } catch (error) {
         alert('加载失败：' + error.message);
