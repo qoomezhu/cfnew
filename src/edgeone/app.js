@@ -82,9 +82,9 @@ async function buildStatus(request, config, context) {
       xhttpPath: buildXhttpPath(config),
       trojanPasswordSource: config.tp ? 'custom' : 'uuid',
       notes: [
-        'vless 支持 WS / xhttp(启用时)',
-        'trojan 当前支持 WS',
-        'xhttp 当前为 VLESS-only',
+        'vless supports ws and xhttp when enabled',
+        'trojan currently supports ws',
+        'xhttp is vless-only',
       ],
     },
     features: {
@@ -141,7 +141,6 @@ export async function handleRequest(context) {
       'x-ech-doh': echInfo.doh || '',
       'x-ech-used-doh': echInfo.usedDoH || '',
       'x-ech-source': echInfo.source || '',
-      'x-ech-detail': echInfo.detail || '',
     }), requestId);
   }
 
