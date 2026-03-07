@@ -113,7 +113,7 @@ async function probeSingleDoH(baseUrl, domain) {
   }
 }
 
-function buildWsPath(config) {
+export function buildWsPath(config) {
   const params = new URLSearchParams({ ed: '2048' });
   if (config.p) params.set('p', config.p);
   if (!config.p && config.wk) params.set('wk', config.wk.toLowerCase());
@@ -122,7 +122,7 @@ function buildWsPath(config) {
   return `/?${params.toString()}`;
 }
 
-function buildXhttpPath(config) {
+export function buildXhttpPath(config) {
   return `/${String(config.u || '').replace(/-/g, '').slice(0, 8)}`;
 }
 
@@ -339,6 +339,7 @@ export function buildClientLinks(request, config) {
   return {
     raw: baseSubUrl,
     converterBase,
+    wsPath: buildWsPath(config),
     xhttpPath: buildXhttpPath(config),
     echEnabled: isEnabled(config.ech, false),
     echDomain: config.echDomain || 'cloudflare-ech.com',

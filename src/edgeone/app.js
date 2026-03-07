@@ -1,6 +1,6 @@
 import { loadConfig, publicConfig, saveConfig } from './config.js';
 import { renderDashboard, renderHealthPage } from './html.js';
-import { buildClientLinks, generateBase64Subscription, inspectECH } from './subscription.js';
+import { buildClientLinks, buildWsPath, buildXhttpPath, generateBase64Subscription, inspectECH } from './subscription.js';
 import { getKV, kvDelete, kvGetJson, kvPutJson, PREFERRED_IPS_KEY } from './store.js';
 import {
   detectRegion,
@@ -74,6 +74,19 @@ async function buildStatus(request, config, context) {
     socksEnabled: Boolean(config.s),
     kvBound: Boolean(getKV(context)),
     ech: echInfo,
+    serverReady: {
+      vless: isEnabled(config.ev, true),
+      trojan: isEnabled(config.et, false),
+      xhttp: isEnabled(config.ex, false),
+      wsPath: buildWsPath(config),
+      xhttpPath: buildXhttpPath(config),
+      trojanPasswordSource: config.tp ? 'custom' : 'uuid',
+      notes: [
+        'vless 支持 WS / xhttp(启用时)',
+        'trojan 当前支持 WS',
+        'xhttp 当前为 VLESS-only',
+      ],
+    },
     features: {
       vless: isEnabled(config.ev, true),
       trojan: isEnabled(config.et, false),
@@ -104,6 +117,7 @@ export async function handleRequest(context) {
   const url = new URL(request.url);
   const pathname = normalizePath(url.pathname);
   const routes = routeInfo(config);
+  const xhttpPath = buildXhttpPath(config);
 
   if ((request.headers.get('upgrade') || '').toLowerCase() === 'websocket') {
     return withRequestId(await handleWebSocketTunnel(request, context, config), requestId);
@@ -267,7 +281,7 @@ export async function handleRequest(context) {
     return withRequestId(textResponse('Method Not Allowed', 405), requestId);
   }
 
-  if (request.method === 'POST' && isEnabled(config.ex, false) && !pathname.includes('/api/')) {
+  if (request.method === 'POST' && isEnabled(config.ex, false) && pathname === xhttpPath) {
     try {
       return withRequestId(await handleXhttpRequest(request, context, config), requestId);
     } catch (error) {
@@ -288,7 +302,7 @@ export async function handleRequest(context) {
     }
   } else {
     const firstSegment = pathname.split('/')[1] || '';
-    if (firstSegment && isValidUUID(firstSegment) && firstSegment !== config.u) {
+    if (firstSegment && isValidUUID(firstSegment) && firstSegment !== config.u && pathname !== xhttpPath) {
       return withRequestId(textResponse('UUID错误', 403), requestId);
     }
   }

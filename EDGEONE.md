@@ -32,6 +32,37 @@
 - DoH DNS 处理
 - xhttp 第一版真实接入
 - ECH 第二版真实接入
+- Trojan 服务端 WS 支持
+
+---
+
+## 第一组已完成
+
+### 1. Trojan 服务端补完
+- 订阅里的 Trojan 节点不再只是“看起来有”
+- 现在服务端已支持 Trojan WS 握手解析与 TCP 转发
+- Trojan 密码：
+  - 若配置 `tp`，则使用自定义密码
+  - 否则默认使用 `u`（UUID）
+- `/api/status` 会显示：
+  - `trojan=true/false`
+  - `trojanPasswordSource=custom/uuid`
+
+### 2. xhttp 路由已收紧
+- 现在不会再把任意非 API 的 POST 当成 xhttp
+- xhttp 只在专属路径生效：
+  - `xhttpPath = /${uuid前8位}`
+- `/api/status` 与 `/api/clients` 都会明确返回 `xhttpPath`
+
+### 3. `/api/status` 增加 `serverReady`
+- 现在状态接口会明确返回：
+  - `vless`
+  - `trojan`
+  - `xhttp`
+  - `wsPath`
+  - `xhttpPath`
+  - `trojanPasswordSource`
+  - `notes`
 
 ---
 
@@ -63,24 +94,30 @@
 - ECH 结果会写入 KV 缓存
 - `doh` 现支持多个地址，逗号分隔，失败自动切换
 
-### 诊断逻辑
-- 使用你配置的 `doh` 列表按顺序尝试
-- 自动补齐 `name` 与 `type=65`
-- 优先解析 JSON 响应的 `Answer`
-- 若无法解析 JSON，则退回文本识别：
-  - `ech=`
-  - `echconfig`
-  - `echconfiglist`
-- 结果状态可能为：
-  - `SUCCESS`
-  - `UNKNOWN`
-  - `FAILED`
-  - `DISABLED`
+---
 
-### 缓存逻辑
-- 使用 KV 保存 ECH 探测结果
-- 默认缓存：`3600` 秒
-- 强制测试接口会跳过缓存，重新探测
+## 当前分支已实现的能力
+
+### 已实现
+- `GET /` 健康检查页
+- `GET /{UUID或自定义路径}` 管理页
+- `GET /{UUID或自定义路径}/sub` Base64 订阅
+- `GET/PUT /{路径}/api/config` 配置读写
+- `GET /{路径}/api/status` 状态诊断
+- `GET /{路径}/api/clients` 客户端快速链接
+- `GET /{路径}/api/export` 导出配置与优选列表
+- `POST /{路径}/api/import` 导入配置与优选列表
+- `GET/POST/DELETE /{路径}/api/preferred-ips` 优选列表管理
+- `WS /?ed=2048` 隧道入口
+- `POST {xhttpPath}` 的 xhttp 流式入口（启用 `ex=yes` 后生效）
+- `p` 覆盖 ProxyIP
+- `wk` 覆盖地区
+- `s` 覆盖 SOCKS5
+- `rm=no` 关闭地区智能匹配
+- `qj=no` 开启 direct -> SOCKS5 -> fallback 的降级链路
+- `ech=yes` 后对 VLESS / Trojan / xhttp 节点下发 ECH 参数
+- 订阅和状态接口返回 ECH 诊断
+- Trojan 服务端握手与转发已就绪
 
 ---
 
@@ -96,29 +133,15 @@ curl "https://your-domain/{UUID或路径}/api/status"
 curl "https://your-domain/{UUID或路径}/api/ech-test"
 ```
 
-### 查看订阅响应头里的 ECH 信息
+### 查看客户端链接
 ```bash
-curl -I "https://your-domain/{UUID或路径}/sub"
+curl "https://your-domain/{UUID或路径}/api/clients"
 ```
 
----
-
-## 环境变量新增
-| 变量 | 说明 |
-| --- | --- |
-| `ech` | 是否启用 ECH，默认 `no` |
-| `echDomain` | ECH 目标域名，默认 `cloudflare-ech.com` |
-| `echCacheTTL` | ECH 缓存秒数，默认 `3600` |
-| `doh` | DoH 地址，支持多个逗号分隔 |
-
-例如：
-
-```env
-ech=yes
-echDomain=cloudflare-ech.com
-echCacheTTL=3600
-doh=https://dns.google/dns-query,https://cloudflare-dns.com/dns-query
-```
+返回中会包含：
+- `wsPath`
+- `xhttpPath`
+- 各客户端快速链接
 
 ---
 
@@ -126,14 +149,15 @@ doh=https://dns.google/dns-query,https://cloudflare-dns.com/dns-query
 
 1. 先部署并确保 `/api/status` 正常
 2. 设置：
+   - `et=yes`
+   - `ex=yes`
    - `ech=yes`
-   - `echDomain=cloudflare-ech.com`
-   - `echCacheTTL=3600`
-   - `doh=https://dns.google/dns-query,https://cloudflare-dns.com/dns-query`
-3. 查看 `/api/status` 中 `ech.status`
-4. 点击管理页里的“强制测试 ECH”
-5. 查看 `/sub` 响应头中的 `X-ECH-*`
-6. 再用 sing-box / v2ray-core 系客户端验证节点
+3. 查看 `/api/status` 中：
+   - `serverReady`
+   - `ech.status`
+4. 先测 Trojan-WS
+5. 再测 xhttp（仅专属路径）
+6. 最后叠加 ECH 验证
 
 ---
 
@@ -146,6 +170,7 @@ doh=https://dns.google/dns-query,https://cloudflare-dns.com/dns-query
 - 能用 KV
 - 能提供订阅
 - 能跑 WebSocket 隧道
+- 能跑 Trojan-WS
 - 能跑 xhttp 第一版
 - 能跑 ECH 第二版
 - 能做基础运维与备份恢复

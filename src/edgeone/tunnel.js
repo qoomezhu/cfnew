@@ -1,4 +1,5 @@
 import net from 'node:net';
+import { createHash } from 'node:crypto';
 import { detectRegion, parseAddressAndPort, pickBackupEndpoint, isValidUUID } from './utils.js';
 
 export const ADDRESS_TYPE_IPV4 = 1;
@@ -308,6 +309,63 @@ export async function connectTargetWithFallback(targetHost, targetPort, initialD
   throw lastError || new Error('所有连接尝试均失败');
 }
 
+function sha224(text) {
+  return createHash('sha224').update(String(text)).digest('hex');
+}
+
+export function parseTrojanHeader(chunk, expectedPassword) {
+  if (!(chunk instanceof Uint8Array)) chunk = new Uint8Array(chunk);
+  if (chunk.byteLength < 60) throw new Error('invalid trojan data');
+
+  const password = new TextDecoder().decode(chunk.slice(0, 56));
+  const expected = sha224(expectedPassword);
+  if (password !== expected) throw new Error('invalid trojan password');
+  if (chunk[56] !== 0x0d || chunk[57] !== 0x0a) throw new Error('invalid trojan CRLF');
+
+  const socks = chunk.slice(58);
+  if (socks.byteLength < 6) throw new Error('invalid trojan socks data');
+  const cmd = socks[0];
+  if (cmd !== 1) throw new Error(`unsupported trojan command: ${cmd}`);
+
+  const addressType = socks[1];
+  let index = 2;
+  let host = '';
+
+  if (addressType === ADDRESS_TYPE_IPV4) {
+    if (socks.byteLength < index + 4 + 4) throw new Error('invalid trojan ipv4 data');
+    host = Array.from(socks.slice(index, index + 4)).join('.');
+    index += 4;
+  } else if (addressType === ADDRESS_TYPE_DOMAIN) {
+    const length = socks[index];
+    index += 1;
+    if (socks.byteLength < index + length + 4) throw new Error('invalid trojan domain data');
+    host = new TextDecoder().decode(socks.slice(index, index + length));
+    index += length;
+  } else if (addressType === ADDRESS_TYPE_IPV6) {
+    if (socks.byteLength < index + 16 + 4) throw new Error('invalid trojan ipv6 data');
+    const view = new DataView(socks.buffer, socks.byteOffset + index, 16);
+    const parts = [];
+    for (let i = 0; i < 8; i += 1) parts.push(view.getUint16(i * 2).toString(16));
+    host = parts.join(':');
+    index += 16;
+  } else {
+    throw new Error(`invalid trojan address type: ${addressType}`);
+  }
+
+  if (!host) throw new Error('empty trojan address');
+  const port = new DataView(socks.buffer, socks.byteOffset + index, 2).getUint16(0);
+  index += 2;
+  if (socks[index] !== 0x0d || socks[index + 1] !== 0x0a) throw new Error('invalid trojan tail CRLF');
+  index += 2;
+
+  return {
+    addressType,
+    host,
+    port,
+    rawData: socks.slice(index),
+  };
+}
+
 export async function handleWebSocketTunnel(request, context, config) {
   const runtimeConfig = buildRuntimeConfig(request, config);
   const { 0: client, 1: server } = new WebSocketPair();
@@ -316,7 +374,7 @@ export async function handleWebSocketTunnel(request, context, config) {
   let remoteSocket = null;
   let isClosed = false;
   let isDnsMode = false;
-  let vlessResponseHeader = null;
+  let responseHeader = null;
   let handshakeDone = false;
 
   const closeAll = () => {
@@ -333,8 +391,8 @@ export async function handleWebSocketTunnel(request, context, config) {
   const sendToClient = (chunk) => {
     if (isClosed || server.readyState !== 1) return;
     const data = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
-    const payload = vlessResponseHeader ? concatUint8Arrays(vlessResponseHeader, data) : data;
-    vlessResponseHeader = null;
+    const payload = responseHeader ? concatUint8Arrays(responseHeader, data) : data;
+    responseHeader = null;
     server.send(payload);
   };
 
@@ -378,18 +436,32 @@ export async function handleWebSocketTunnel(request, context, config) {
     if (isClosed) return;
     const data = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
     if (!handshakeDone) {
-      const parsed = parseVlessHeader(data, config.u);
-      handshakeDone = true;
-      vlessResponseHeader = new Uint8Array([parsed.version[0], 0]);
+      let parsed = null;
+      let protocol = '';
 
-      if (parsed.command === 2) {
+      try {
+        parsed = parseVlessHeader(data, config.u);
+        protocol = 'vless';
+      } catch (vlessError) {
+        if (isEnabled(config.et, false)) {
+          parsed = parseTrojanHeader(data, config.tp || config.u);
+          protocol = 'trojan';
+        } else {
+          throw vlessError;
+        }
+      }
+
+      handshakeDone = true;
+      responseHeader = protocol === 'vless' ? new Uint8Array([parsed.version[0], 0]) : null;
+
+      if (protocol === 'vless' && parsed.command === 2) {
         if (parsed.port !== 53) throw new Error('UDP 仅支持 DNS 53 端口');
         isDnsMode = true;
         await handleDnsQuery(parsed.rawData);
         return;
       }
 
-      if (parsed.command !== 1) throw new Error('仅支持 TCP 和 DNS-UDP');
+      if (protocol === 'vless' && parsed.command !== 1) throw new Error('仅支持 TCP 和 DNS-UDP');
       await establishConnection(parsed.host, parsed.port, parsed.rawData);
       return;
     }

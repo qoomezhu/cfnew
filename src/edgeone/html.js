@@ -176,7 +176,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
           <span class="pill">doh = DNS over HTTPS，可多个逗号分隔</span>
           <span class="pill">scu = 订阅转换服务</span>
         </div>
-        <div class="tips">说明：ECH 第二版已加入 KV 缓存、多 DoH 回退、管理页强制测试按钮。<code>doh</code> 现在支持多个地址逗号分隔，系统会按顺序探测并在状态里显示实际使用的 DoH。</div>
+        <div class="tips">说明：ECH 第二版已加入 KV 缓存、多 DoH 回退、管理页强制测试按钮。<code>doh</code> 现在支持多个地址逗号分隔，系统会按顺序探测并在状态里显示实际使用的 DoH。Trojan 现已补完服务端 WS 握手支持；xhttp 路由已收紧到专属路径。</div>
       </section>
     </div>
   </div>
@@ -206,6 +206,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
       const status = document.getElementById('statusBox');
       const featureEntries = Object.entries(data.features || {});
       const ech = data.ech || {};
+      const serverReady = data.serverReady || {};
       const rows = [
         ['路由基址', data.routeBase],
         ['地区判定', data.region || '-'],
@@ -215,6 +216,10 @@ WebSocket：${url.origin}/?ed=2048</pre>
         ['ProxyIP', data.proxyIP || '<span class="warn">未设置</span>'],
         ['SOCKS5', data.socksEnabled ? '<span class="ok">已启用</span>' : '<span class="warn">未启用</span>'],
         ['自定义路径', data.customPath || '<span class="warn">未设置</span>'],
+        ['服务端就绪', 'vless=' + (serverReady.vless ? 'ready' : 'off') + ' / trojan=' + (serverReady.trojan ? 'ready' : 'off') + ' / xhttp=' + (serverReady.xhttp ? 'ready' : 'off')],
+        ['WS 路径', serverReady.wsPath || '-'],
+        ['xhttp 路径', serverReady.xhttpPath || '-'],
+        ['Trojan 密码来源', serverReady.trojanPasswordSource || '-'],
         ['ECH 状态', ech.status || '-'],
         ['ECH 域名', ech.domain || '-'],
         ['ECH DoH 列表', ech.doh || '-'],
@@ -230,6 +235,8 @@ WebSocket：${url.origin}/?ed=2048</pre>
         return '<span class="pill"><span class="' + cls + '">' + esc(k) + ': ' + (v ? 'on' : 'off') + '</span></span>';
       }).join('');
 
+      const notes = Array.isArray(serverReady.notes) ? serverReady.notes.map((item) => '<li>' + esc(item) + '</li>').join('') : '';
+
       status.innerHTML =
         '<table>' +
         rows.map(function (row) {
@@ -237,6 +244,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
         }).join('') +
         '</table>' +
         '<div style="margin-top:12px;">' + featureHtml + '</div>' +
+        (notes ? '<div class="tips" style="margin-top:12px;"><strong>说明</strong><ul>' + notes + '</ul></div>' : '') +
         '<div class="tips" style="margin-top:12px;">请求 ID：<code>' + esc(data.requestId || '-') + '</code></div>';
     }
 
@@ -246,6 +254,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
       box.innerHTML =
         '<div class="tips">原始订阅：<code>' + esc(data.raw || '') + '</code></div>' +
         '<div class="tips">转换服务：<code>' + esc(data.converterBase || '') + '</code></div>' +
+        '<div class="tips">WS 路径：<code>' + esc(data.wsPath || '') + '</code></div>' +
         '<div class="tips">xhttp 路径：<code>' + esc(data.xhttpPath || '') + '</code></div>' +
         '<div class="tips">ECH：<code>' + (data.echEnabled ? 'enabled' : 'disabled') + '</code> / 目标域名：<code>' + esc(data.echDomain || '') + '</code> / 主 DoH：<code>' + esc(data.echPrimaryDoh || '') + '</code> / 缓存：<code>' + esc(data.echCacheTTL || '') + 's</code></div>' +
         '<table style="margin-top:12px;">' +
