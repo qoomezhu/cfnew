@@ -1,4 +1,4 @@
-import { kvGetJson, PREFERRED_IPS_KEY } from './store.js';
+import { kvGetJson, kvPutJson, PREFERRED_IPS_KEY, ECH_CACHE_PREFIX } from './store.js';
 import {
   dedupeEndpoints,
   directDomains,
@@ -8,6 +8,110 @@ import {
 } from './utils.js';
 
 const DEFAULT_GITHUB_PREFERRED_URL = 'https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt';
+const DEFAULT_DOH_CANDIDATES = [
+  'https://dns.google/dns-query',
+  'https://cloudflare-dns.com/dns-query',
+];
+
+function splitCommaList(value) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function getDoHCandidates(config) {
+  const values = splitCommaList(config.doh);
+  const ordered = [];
+  const seen = new Set();
+  for (const value of [...values, ...DEFAULT_DOH_CANDIDATES]) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    ordered.push(value);
+  }
+  return ordered;
+}
+
+function getPrimaryDoH(config) {
+  return getDoHCandidates(config)[0] || DEFAULT_DOH_CANDIDATES[0];
+}
+
+function buildECHCacheKey(config) {
+  const raw = `${config.echDomain || 'cloudflare-ech.com'}|${getDoHCandidates(config).join(',')}`;
+  return ECH_CACHE_PREFIX + Buffer.from(raw).toString('base64url');
+}
+
+function buildDoHProbeUrl(baseUrl, domain) {
+  const url = new URL(baseUrl);
+  if (!url.searchParams.has('name')) url.searchParams.set('name', domain);
+  if (!url.searchParams.has('type')) url.searchParams.set('type', '65');
+  return url.toString();
+}
+
+async function probeSingleDoH(baseUrl, domain) {
+  const probeUrl = buildDoHProbeUrl(baseUrl, domain);
+  try {
+    const response = await fetch(probeUrl, {
+      headers: { accept: 'application/dns-json, application/json, text/plain, */*' },
+    });
+
+    if (!response.ok) {
+      return {
+        status: 'FAILED',
+        domain,
+        doh: baseUrl,
+        usedDoH: baseUrl,
+        detail: `DoH 请求失败: ${response.status}`,
+        sample: '',
+      };
+    }
+
+    const text = await response.text();
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {}
+
+    if (json && Array.isArray(json.Answer)) {
+      const answers = json.Answer.filter((item) => item && (item.type === 65 || item.data));
+      if (answers.length > 0) {
+        return {
+          status: 'SUCCESS',
+          domain,
+          doh: baseUrl,
+          usedDoH: baseUrl,
+          detail: `DoH 返回 ${answers.length} 条 Answer 记录`,
+          sample: text.slice(0, 240),
+        };
+      }
+      return {
+        status: 'UNKNOWN',
+        domain,
+        doh: baseUrl,
+        usedDoH: baseUrl,
+        detail: 'DoH 已响应，但未返回可识别的 Answer 记录',
+        sample: text.slice(0, 240),
+      };
+    }
+
+    const lower = text.toLowerCase();
+    const hasECH = lower.includes('ech=') || lower.includes('echconfig') || lower.includes('echconfiglist');
+    return {
+      status: hasECH ? 'SUCCESS' : 'UNKNOWN',
+      domain,
+      doh: baseUrl,
+      usedDoH: baseUrl,
+      detail: hasECH ? '文本响应中识别到 ECH 相关字段' : 'DoH 已响应，但未在文本中识别到 ECH 字段',
+      sample: text.slice(0, 240),
+    };
+  } catch (error) {
+    return {
+      status: 'FAILED',
+      domain,
+      doh: baseUrl,
+      usedDoH: baseUrl,
+      detail: `DoH 探测异常: ${error.message}`,
+      sample: '',
+    };
+  }
+}
 
 function buildWsPath(config) {
   const params = new URLSearchParams({ ed: '2048' });
@@ -24,63 +128,75 @@ function buildXhttpPath(config) {
 
 function buildEchValue(config) {
   const echDomain = config.echDomain || 'cloudflare-ech.com';
-  const doh = config.doh || 'https://dns.google/dns-query';
+  const doh = getPrimaryDoH(config);
   return `${echDomain}+${doh}`;
 }
 
-export async function inspectECH(config) {
+export async function inspectECH(context, config, options = {}) {
+  const force = Boolean(options.force);
   if (!isEnabled(config.ech, false)) {
     return {
       enabled: false,
       status: 'DISABLED',
       domain: config.echDomain || 'cloudflare-ech.com',
-      doh: config.doh || 'https://dns.google/dns-query',
+      doh: getPrimaryDoH(config),
+      usedDoH: '',
       detail: 'ECH 未启用',
+      source: 'config',
+      cachedAt: null,
+      expiresAt: null,
     };
+  }
+
+  const ttlSeconds = Math.max(60, Number(config.echCacheTTL || 3600));
+  const cacheKey = buildECHCacheKey(config);
+  const now = Date.now();
+
+  if (!force) {
+    const cached = await kvGetJson(context, cacheKey, null);
+    if (cached?.expiresAt && cached.expiresAt > now) {
+      return {
+        ...cached,
+        source: 'cache',
+      };
+    }
   }
 
   const domain = config.echDomain || 'cloudflare-ech.com';
-  const doh = config.doh || 'https://dns.google/dns-query';
+  const candidates = getDoHCandidates(config);
+  let best = null;
+
+  for (const candidate of candidates) {
+    const current = await probeSingleDoH(candidate, domain);
+    if (!best) best = current;
+    if (current.status === 'SUCCESS') {
+      best = current;
+      break;
+    }
+    if (best.status !== 'SUCCESS' && current.status === 'UNKNOWN') {
+      best = current;
+    }
+  }
+
+  const result = {
+    enabled: true,
+    status: best?.status || 'FAILED',
+    domain,
+    doh: candidates.join(', '),
+    usedDoH: best?.usedDoH || candidates[0] || '',
+    detail: best?.detail || '没有可用的 DoH 响应',
+    sample: best?.sample || '',
+    source: 'network',
+    cachedAt: now,
+    expiresAt: now + ttlSeconds * 1000,
+    cacheTTL: ttlSeconds,
+  };
 
   try {
-    const url = new URL(doh);
-    if (!url.searchParams.has('name')) url.searchParams.set('name', domain);
-    if (!url.searchParams.has('type')) url.searchParams.set('type', '65');
-    const response = await fetch(url.toString(), {
-      headers: { accept: 'application/dns-json, application/json, */*' },
-    });
+    await kvPutJson(context, cacheKey, result);
+  } catch {}
 
-    if (!response.ok) {
-      return {
-        enabled: true,
-        status: 'FAILED',
-        domain,
-        doh,
-        detail: `DoH 请求失败: ${response.status}`,
-      };
-    }
-
-    const text = await response.text();
-    const lower = text.toLowerCase();
-    const hasECH = lower.includes('ech=') || lower.includes('echconfig') || lower.includes('echconfiglist');
-
-    return {
-      enabled: true,
-      status: hasECH ? 'SUCCESS' : 'UNKNOWN',
-      domain,
-      doh,
-      detail: hasECH ? 'DoH 返回中检测到 ECH 相关字段' : 'DoH 已响应，但未在响应文本中识别到 ECH 字段',
-      sample: text.slice(0, 240),
-    };
-  } catch (error) {
-    return {
-      enabled: true,
-      status: 'FAILED',
-      domain,
-      doh,
-      detail: `DoH 检测异常: ${error.message}`,
-    };
-  }
+  return result;
 }
 
 function toName(sourceName, port, protoLabel) {
@@ -226,6 +342,8 @@ export function buildClientLinks(request, config) {
     xhttpPath: buildXhttpPath(config),
     echEnabled: isEnabled(config.ech, false),
     echDomain: config.echDomain || 'cloudflare-ech.com',
+    echPrimaryDoh: getPrimaryDoH(config),
+    echCacheTTL: Number(config.echCacheTTL || 3600),
     clients: {
       base64: baseSubUrl,
       clash: makeConverter('clash'),

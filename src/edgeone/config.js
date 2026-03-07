@@ -6,7 +6,7 @@ const REGION_CODES = ['US', 'SG', 'JP', 'HK', 'KR', 'DE', 'SE', 'NL', 'FI', 'GB'
 
 const allowedKeys = [
   'u', 'p', 's', 'd', 'wk',
-  'ev', 'et', 'ex', 'tp', 'ech', 'echDomain',
+  'ev', 'et', 'ex', 'tp', 'ech', 'echDomain', 'echCacheTTL',
   'yx', 'yxURL', 'scu', 'epd', 'epi', 'egi',
   'qj', 'dkby', 'yxby', 'rm', 'ae',
   'doh', 'fallback'
@@ -37,6 +37,7 @@ function normalizeConfig(input = {}) {
   config.tp = config.tp || '';
   config.ech = config.ech || 'no';
   config.echDomain = config.echDomain || 'cloudflare-ech.com';
+  config.echCacheTTL = config.echCacheTTL || '3600';
   config.yx = config.yx || '';
   config.yxURL = config.yxURL || '';
   config.scu = config.scu || 'https://url.v1.mk/sub';
@@ -74,17 +75,27 @@ export function validateConfigPayload(payload = {}) {
     }
   }
   if (payload.doh != null && payload.doh !== '') {
-    try {
-      const url = new URL(String(payload.doh));
-      if (!/^https?:$/.test(url.protocol)) throw new Error('bad protocol');
-    } catch {
-      errors.push('doh 必须是合法的 http/https URL');
+    const values = String(payload.doh).split(',').map((item) => item.trim()).filter(Boolean);
+    for (const value of values) {
+      try {
+        const url = new URL(value);
+        if (!/^https?:$/.test(url.protocol)) throw new Error('bad protocol');
+      } catch {
+        errors.push('doh 必须是合法的 http/https URL，多个值请用逗号分隔');
+        break;
+      }
     }
   }
   if (payload.echDomain != null && payload.echDomain !== '') {
     const domain = String(payload.echDomain).trim();
     if (!/^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[A-Za-z]{2,}$/.test(domain)) {
       errors.push('echDomain 必须是合法域名');
+    }
+  }
+  if (payload.echCacheTTL != null && payload.echCacheTTL !== '') {
+    const ttl = Number(payload.echCacheTTL);
+    if (!Number.isFinite(ttl) || ttl < 60) {
+      errors.push('echCacheTTL 必须是大于等于 60 的秒数');
     }
   }
   if (payload.d != null && payload.d !== '' && String(payload.d).trim() === '/') {

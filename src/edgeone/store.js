@@ -1,5 +1,6 @@
 export const CONFIG_KEY = 'cfnew:edgeone:config';
 export const PREFERRED_IPS_KEY = 'cfnew:edgeone:preferred-ips';
+export const ECH_CACHE_PREFIX = 'cfnew:edgeone:ech:';
 
 export function getKV(context) {
   return context?.env?.C || context?.env?.my_kv || globalThis.C || globalThis.my_kv || null;

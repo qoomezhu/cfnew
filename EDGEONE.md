@@ -12,6 +12,7 @@
 - **DoH**：用于 DNS 查询，避免依赖 UDP 原生转发
 - **xhttp POST 流式转发**：用于承接原项目的 xhttp 思路
 - **ECH 参数下发 + DoH 诊断**：用于承接原项目的 ECH 能力
+- **ECH KV 缓存 + 多 DoH 回退**：用于增强 EdgeOne 环境下的 ECH 稳定性
 
 这套设计绕开了 Cloudflare 专属的：
 
@@ -30,112 +31,94 @@
 - SOCKS5 降级
 - DoH DNS 处理
 - xhttp 第一版真实接入
-- ECH 第一版真实接入
+- ECH 第二版真实接入
 
 ---
 
-## A2：ECH 当前实现说明
+## A2 第二版：ECH 当前实现说明
 
-这次不是“只加一个开关”，而是补了一套真实可用的 ECH 第一版：
+这次不是“只加一个开关”，而是补了一套更完整的真实可用 ECH 第二版：
 
 ### 已实现
-- 新增配置项：`echDomain`
+- 新增配置项：
+  - `echDomain`
+  - `echCacheTTL`
 - `ech=yes` 时，VLESS / Trojan / xhttp 节点会附带：
-  - `ech=${echDomain}+${doh}`
+  - `ech=${echDomain}+${primaryDoh}`
 - 订阅接口会返回诊断响应头：
   - `X-ECH-Status`
   - `X-ECH-Domain`
   - `X-ECH-DoH`
+  - `X-ECH-Used-DoH`
+  - `X-ECH-Source`
   - `X-ECH-Detail`
-- 状态接口会返回 ECH 诊断结果
-- 管理页会显示 ECH 状态 / 域名 / DoH / 说明
+- 状态接口会返回：
+  - ECH 状态
+  - DoH 列表
+  - 实际使用的 DoH
+  - 来源（cache/network/config）
+  - 缓存时间与过期时间
+- 管理页新增：
+  - 强制测试 ECH 按钮
+- ECH 结果会写入 KV 缓存
+- `doh` 现支持多个地址，逗号分隔，失败自动切换
 
 ### 诊断逻辑
-- 会使用你配置的 `doh`
-- 以 `type=65` 查询你配置的 `echDomain`
-- 尝试在返回文本中识别：
+- 使用你配置的 `doh` 列表按顺序尝试
+- 自动补齐 `name` 与 `type=65`
+- 优先解析 JSON 响应的 `Answer`
+- 若无法解析 JSON，则退回文本识别：
   - `ech=`
   - `echconfig`
   - `echconfiglist`
+- 结果状态可能为：
+  - `SUCCESS`
+  - `UNKNOWN`
+  - `FAILED`
+  - `DISABLED`
 
-### 当前限制
-- 这是第一版 ECH 真实接入，重点是：
-  - 节点参数真实下发
-  - DoH 真实检测
-  - 响应头/状态页真实反馈
-- 还没有做更重的：
-  - 多 DoH 自动切换
-  - ECH 结果缓存
-  - 更细颗粒度结构化解析
-
----
-
-## 当前分支已实现的能力
-
-### 已实现
-- `GET /` 健康检查页
-- `GET /{UUID或自定义路径}` 管理页
-- `GET /{UUID或自定义路径}/sub` Base64 订阅
-- `GET/PUT /{路径}/api/config` 配置读写
-- `GET /{路径}/api/status` 状态诊断
-- `GET /{路径}/api/clients` 客户端快速链接
-- `GET /{路径}/api/export` 导出配置与优选列表
-- `POST /{路径}/api/import` 导入配置与优选列表
-- `GET/POST/DELETE /{路径}/api/preferred-ips` 优选列表管理
-- `WS /?ed=2048` 隧道入口
-- `POST /*` 的 xhttp 流式入口（启用 `ex=yes` 后生效，且不会拦截 `/api/*`）
-- `p` 覆盖 ProxyIP
-- `wk` 覆盖地区
-- `s` 覆盖 SOCKS5
-- `rm=no` 关闭地区智能匹配
-- `qj=no` 开启 direct -> SOCKS5 -> fallback 的降级链路
-- `ech=yes` 后对 VLESS / Trojan / xhttp 节点下发 ECH 参数
-- 订阅和状态接口返回 ECH 诊断
+### 缓存逻辑
+- 使用 KV 保存 ECH 探测结果
+- 默认缓存：`3600` 秒
+- 强制测试接口会跳过缓存，重新探测
 
 ---
 
-## 部署方式
+## 新增/更新接口
 
-### 环境变量新增
-| 变量 | 说明 |
-| --- | --- |
-| `ech` | 是否启用 ECH，默认 `no` |
-| `echDomain` | ECH 目标域名，默认 `cloudflare-ech.com` |
-| `doh` | DoH 地址，默认 `https://dns.google/dns-query` |
-
-例如：
-
-```env
-ech=yes
-echDomain=cloudflare-ech.com
-doh=https://dns.google/dns-query
-```
-
----
-
-## API 示例
-
-### 查看 ECH 状态
+### 查看状态（默认走缓存）
 ```bash
 curl "https://your-domain/{UUID或路径}/api/status"
 ```
 
-你会在返回 JSON 里看到：
-- `ech.status`
-- `ech.domain`
-- `ech.doh`
-- `ech.detail`
+### 强制重新测试 ECH（跳过缓存）
+```bash
+curl "https://your-domain/{UUID或路径}/api/ech-test"
+```
 
 ### 查看订阅响应头里的 ECH 信息
 ```bash
 curl -I "https://your-domain/{UUID或路径}/sub"
 ```
 
-你会看到：
-- `X-ECH-Status`
-- `X-ECH-Domain`
-- `X-ECH-DoH`
-- `X-ECH-Detail`
+---
+
+## 环境变量新增
+| 变量 | 说明 |
+| --- | --- |
+| `ech` | 是否启用 ECH，默认 `no` |
+| `echDomain` | ECH 目标域名，默认 `cloudflare-ech.com` |
+| `echCacheTTL` | ECH 缓存秒数，默认 `3600` |
+| `doh` | DoH 地址，支持多个逗号分隔 |
+
+例如：
+
+```env
+ech=yes
+echDomain=cloudflare-ech.com
+echCacheTTL=3600
+doh=https://dns.google/dns-query,https://cloudflare-dns.com/dns-query
+```
 
 ---
 
@@ -145,10 +128,12 @@ curl -I "https://your-domain/{UUID或路径}/sub"
 2. 设置：
    - `ech=yes`
    - `echDomain=cloudflare-ech.com`
-   - `doh=https://dns.google/dns-query`
+   - `echCacheTTL=3600`
+   - `doh=https://dns.google/dns-query,https://cloudflare-dns.com/dns-query`
 3. 查看 `/api/status` 中 `ech.status`
-4. 查看 `/sub` 响应头中的 `X-ECH-*`
-5. 再用 sing-box / v2ray-core 系客户端验证节点
+4. 点击管理页里的“强制测试 ECH”
+5. 查看 `/sub` 响应头中的 `X-ECH-*`
+6. 再用 sing-box / v2ray-core 系客户端验证节点
 
 ---
 
@@ -162,7 +147,7 @@ curl -I "https://your-domain/{UUID或路径}/sub"
 - 能提供订阅
 - 能跑 WebSocket 隧道
 - 能跑 xhttp 第一版
-- 能跑 ECH 第一版
+- 能跑 ECH 第二版
 - 能做基础运维与备份恢复
 
 的 **第一版可部署 EdgeOne 实现**。

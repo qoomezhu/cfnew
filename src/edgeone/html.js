@@ -115,6 +115,9 @@ WebSocket：${url.origin}/?ed=2048</pre>
       <section class="card">
         <h2>运行状态</h2>
         <div id="statusBox" class="muted">正在加载状态…</div>
+        <div class="row" style="margin-top:12px;">
+          <button onclick="forceECHTest()">强制测试 ECH</button>
+        </div>
       </section>
 
       <section class="card full">
@@ -124,7 +127,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
 
       <section class="card full">
         <h2>配置 JSON</h2>
-        <div class="muted">可直接编辑后保存。常用字段：<code>u</code>、<code>d</code>、<code>p</code>、<code>s</code>、<code>wk</code>、<code>ev</code>、<code>et</code>、<code>ex</code>、<code>ech</code>、<code>echDomain</code>、<code>yx</code>、<code>yxURL</code>、<code>ae</code>、<code>qj</code>、<code>doh</code>。</div>
+        <div class="muted">可直接编辑后保存。常用字段：<code>u</code>、<code>d</code>、<code>p</code>、<code>s</code>、<code>wk</code>、<code>ev</code>、<code>et</code>、<code>ex</code>、<code>ech</code>、<code>echDomain</code>、<code>echCacheTTL</code>、<code>yx</code>、<code>yxURL</code>、<code>ae</code>、<code>qj</code>、<code>doh</code>。</div>
         <textarea id="configBox">${configJson}</textarea>
         <div class="row" style="margin-top: 12px;">
           <button onclick="saveConfig()">保存配置</button>
@@ -167,12 +170,13 @@ WebSocket：${url.origin}/?ed=2048</pre>
           <span class="pill">ex = xhttp</span>
           <span class="pill">ech = 开启 ECH</span>
           <span class="pill">echDomain = ECH 目标域名</span>
+          <span class="pill">echCacheTTL = ECH 缓存秒数</span>
           <span class="pill">ae = API 管理</span>
           <span class="pill">qj = 降级链路</span>
-          <span class="pill">doh = DNS over HTTPS</span>
+          <span class="pill">doh = DNS over HTTPS，可多个逗号分隔</span>
           <span class="pill">scu = 订阅转换服务</span>
         </div>
-        <div class="tips">说明：ECH 第一版已接入真实参数下发和 DoH 诊断。开启 <code>ech=yes</code> 后，生成的 VLESS / Trojan / xhttp 节点会附带 <code>ech</code> 参数，状态接口和订阅响应头会给出诊断结果。</div>
+        <div class="tips">说明：ECH 第二版已加入 KV 缓存、多 DoH 回退、管理页强制测试按钮。<code>doh</code> 现在支持多个地址逗号分隔，系统会按顺序探测并在状态里显示实际使用的 DoH。</div>
       </section>
     </div>
   </div>
@@ -213,7 +217,11 @@ WebSocket：${url.origin}/?ed=2048</pre>
         ['自定义路径', data.customPath || '<span class="warn">未设置</span>'],
         ['ECH 状态', ech.status || '-'],
         ['ECH 域名', ech.domain || '-'],
-        ['ECH DoH', ech.doh || '-'],
+        ['ECH DoH 列表', ech.doh || '-'],
+        ['ECH 当前使用', ech.usedDoH || '-'],
+        ['ECH 来源', ech.source || '-'],
+        ['ECH 缓存时间', ech.cachedAt ? new Date(ech.cachedAt).toLocaleString() : '-'],
+        ['ECH 过期时间', ech.expiresAt ? new Date(ech.expiresAt).toLocaleString() : '-'],
         ['ECH 说明', esc(ech.detail || '-')],
       ];
 
@@ -239,7 +247,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
         '<div class="tips">原始订阅：<code>' + esc(data.raw || '') + '</code></div>' +
         '<div class="tips">转换服务：<code>' + esc(data.converterBase || '') + '</code></div>' +
         '<div class="tips">xhttp 路径：<code>' + esc(data.xhttpPath || '') + '</code></div>' +
-        '<div class="tips">ECH：<code>' + (data.echEnabled ? 'enabled' : 'disabled') + '</code> / 目标域名：<code>' + esc(data.echDomain || '') + '</code></div>' +
+        '<div class="tips">ECH：<code>' + (data.echEnabled ? 'enabled' : 'disabled') + '</code> / 目标域名：<code>' + esc(data.echDomain || '') + '</code> / 主 DoH：<code>' + esc(data.echPrimaryDoh || '') + '</code> / 缓存：<code>' + esc(data.echCacheTTL || '') + 's</code></div>' +
         '<table style="margin-top:12px;">' +
         entries.map(function (entry) {
           const name = entry[0];
@@ -259,6 +267,21 @@ WebSocket：${url.origin}/?ed=2048</pre>
         renderStatus(data);
       } catch (error) {
         box.innerHTML = '<span class="err">状态获取失败：' + esc(error.message) + '</span>';
+      }
+    }
+
+    async function forceECHTest() {
+      const box = document.getElementById('statusBox');
+      box.textContent = '正在强制测试 ECH…';
+      try {
+        const response = await fetch(BASE + '/api/ech-test');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'ECH 测试失败');
+        alert('ECH 测试完成：' + (data.status || 'UNKNOWN'));
+        await reloadStatus();
+      } catch (error) {
+        alert('ECH 测试失败：' + error.message);
+        await reloadStatus();
       }
     }
 

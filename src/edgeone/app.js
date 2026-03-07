@@ -36,6 +36,7 @@ function routeInfo(config) {
     exportApiPath: normalizePath(`${routeBase}/api/export`),
     importApiPath: normalizePath(`${routeBase}/api/import`),
     clientsApiPath: normalizePath(`${routeBase}/api/clients`),
+    echTestApiPath: normalizePath(`${routeBase}/api/ech-test`),
   };
 }
 
@@ -61,7 +62,7 @@ function withRequestId(response, requestId) {
 
 async function buildStatus(request, config, context) {
   const url = new URL(request.url);
-  const echInfo = await inspectECH(config);
+  const echInfo = await inspectECH(context, config, { force: false });
   return {
     requestId: getRequestId(request),
     host: url.host,
@@ -118,12 +119,14 @@ export async function handleRequest(context) {
 
   if (pathname === routes.subPath && request.method === 'GET') {
     const content = await generateBase64Subscription(request, context, config);
-    const echInfo = await inspectECH(config);
+    const echInfo = await inspectECH(context, config, { force: false });
     return withRequestId(textResponse(content, 200, {
       'cache-control': 'no-store, no-cache, must-revalidate, max-age=0',
       'x-ech-status': echInfo.status,
       'x-ech-domain': echInfo.domain || '',
       'x-ech-doh': echInfo.doh || '',
+      'x-ech-used-doh': echInfo.usedDoH || '',
+      'x-ech-source': echInfo.source || '',
       'x-ech-detail': echInfo.detail || '',
     }), requestId);
   }
@@ -133,6 +136,11 @@ export async function handleRequest(context) {
       ...(await buildStatus(request, config, context)),
       requestId,
     }), requestId);
+  }
+
+  if (pathname === routes.echTestApiPath && request.method === 'GET') {
+    const result = await inspectECH(context, config, { force: true });
+    return withRequestId(jsonResponse(result), requestId);
   }
 
   if (pathname === routes.clientsApiPath && request.method === 'GET') {
