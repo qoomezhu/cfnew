@@ -22,6 +22,67 @@ function buildXhttpPath(config) {
   return `/${String(config.u || '').replace(/-/g, '').slice(0, 8)}`;
 }
 
+function buildEchValue(config) {
+  const echDomain = config.echDomain || 'cloudflare-ech.com';
+  const doh = config.doh || 'https://dns.google/dns-query';
+  return `${echDomain}+${doh}`;
+}
+
+export async function inspectECH(config) {
+  if (!isEnabled(config.ech, false)) {
+    return {
+      enabled: false,
+      status: 'DISABLED',
+      domain: config.echDomain || 'cloudflare-ech.com',
+      doh: config.doh || 'https://dns.google/dns-query',
+      detail: 'ECH 未启用',
+    };
+  }
+
+  const domain = config.echDomain || 'cloudflare-ech.com';
+  const doh = config.doh || 'https://dns.google/dns-query';
+
+  try {
+    const url = new URL(doh);
+    if (!url.searchParams.has('name')) url.searchParams.set('name', domain);
+    if (!url.searchParams.has('type')) url.searchParams.set('type', '65');
+    const response = await fetch(url.toString(), {
+      headers: { accept: 'application/dns-json, application/json, */*' },
+    });
+
+    if (!response.ok) {
+      return {
+        enabled: true,
+        status: 'FAILED',
+        domain,
+        doh,
+        detail: `DoH 请求失败: ${response.status}`,
+      };
+    }
+
+    const text = await response.text();
+    const lower = text.toLowerCase();
+    const hasECH = lower.includes('ech=') || lower.includes('echconfig') || lower.includes('echconfiglist');
+
+    return {
+      enabled: true,
+      status: hasECH ? 'SUCCESS' : 'UNKNOWN',
+      domain,
+      doh,
+      detail: hasECH ? 'DoH 返回中检测到 ECH 相关字段' : 'DoH 已响应，但未在响应文本中识别到 ECH 字段',
+      sample: text.slice(0, 240),
+    };
+  } catch (error) {
+    return {
+      enabled: true,
+      status: 'FAILED',
+      domain,
+      doh,
+      detail: `DoH 检测异常: ${error.message}`,
+    };
+  }
+}
+
 function toName(sourceName, port, protoLabel) {
   return `${sourceName}-${port}-${protoLabel}`;
 }
@@ -34,10 +95,13 @@ function buildVlessLink(endpoint, config, workerDomain) {
     type: 'ws',
     host: workerDomain,
     sni: workerDomain,
-    fp: 'randomized',
+    fp: isEnabled(config.ech, false) ? 'chrome' : 'randomized',
     alpn: 'h3,h2,http/1.1',
     path: wsPath,
   });
+  if (isEnabled(config.ech, false)) {
+    params.set('ech', buildEchValue(config));
+  }
   const host = wrapHostForUrl(endpoint.host);
   const name = encodeURIComponent(toName(endpoint.name, endpoint.port, 'VLESS-WS-TLS'));
   return `vless://${config.u}@${host}:${endpoint.port}?${params.toString()}#${name}`;
@@ -53,7 +117,11 @@ function buildTrojanLink(endpoint, config, workerDomain) {
     sni: workerDomain,
     alpn: 'h3,h2,http/1.1',
     path: wsPath,
+    fp: 'chrome',
   });
+  if (isEnabled(config.ech, false)) {
+    params.set('ech', buildEchValue(config));
+  }
   const host = wrapHostForUrl(endpoint.host);
   const name = encodeURIComponent(toName(endpoint.name, endpoint.port, 'Trojan-WS-TLS'));
   return `trojan://${password}@${host}:${endpoint.port}?${params.toString()}#${name}`;
@@ -73,6 +141,9 @@ function buildXhttpLink(endpoint, config, workerDomain) {
     path: buildXhttpPath(config),
     alpn: 'h3,h2,http/1.1',
   });
+  if (isEnabled(config.ech, false)) {
+    params.set('ech', buildEchValue(config));
+  }
   return `vless://${config.u}@${host}:${endpoint.port}?${params.toString()}#${name}`;
 }
 
@@ -153,6 +224,8 @@ export function buildClientLinks(request, config) {
     raw: baseSubUrl,
     converterBase,
     xhttpPath: buildXhttpPath(config),
+    echEnabled: isEnabled(config.ech, false),
+    echDomain: config.echDomain || 'cloudflare-ech.com',
     clients: {
       base64: baseSubUrl,
       clash: makeConverter('clash'),

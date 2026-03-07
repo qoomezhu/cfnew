@@ -6,7 +6,7 @@ const REGION_CODES = ['US', 'SG', 'JP', 'HK', 'KR', 'DE', 'SE', 'NL', 'FI', 'GB'
 
 const allowedKeys = [
   'u', 'p', 's', 'd', 'wk',
-  'ev', 'et', 'ex', 'tp', 'ech',
+  'ev', 'et', 'ex', 'tp', 'ech', 'echDomain',
   'yx', 'yxURL', 'scu', 'epd', 'epi', 'egi',
   'qj', 'dkby', 'yxby', 'rm', 'ae',
   'doh', 'fallback'
@@ -36,6 +36,7 @@ function normalizeConfig(input = {}) {
   config.ex = config.ex || 'no';
   config.tp = config.tp || '';
   config.ech = config.ech || 'no';
+  config.echDomain = config.echDomain || 'cloudflare-ech.com';
   config.yx = config.yx || '';
   config.yxURL = config.yxURL || '';
   config.scu = config.scu || 'https://url.v1.mk/sub';
@@ -78,6 +79,12 @@ export function validateConfigPayload(payload = {}) {
       if (!/^https?:$/.test(url.protocol)) throw new Error('bad protocol');
     } catch {
       errors.push('doh 必须是合法的 http/https URL');
+    }
+  }
+  if (payload.echDomain != null && payload.echDomain !== '') {
+    const domain = String(payload.echDomain).trim();
+    if (!/^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[A-Za-z]{2,}$/.test(domain)) {
+      errors.push('echDomain 必须是合法域名');
     }
   }
   if (payload.d != null && payload.d !== '' && String(payload.d).trim() === '/') {

@@ -11,6 +11,7 @@
 - **WebSocketPair + node:net**：用于隧道核心
 - **DoH**：用于 DNS 查询，避免依赖 UDP 原生转发
 - **xhttp POST 流式转发**：用于承接原项目的 xhttp 思路
+- **ECH 参数下发 + DoH 诊断**：用于承接原项目的 ECH 能力
 
 这套设计绕开了 Cloudflare 专属的：
 
@@ -29,26 +30,43 @@
 - SOCKS5 降级
 - DoH DNS 处理
 - xhttp 第一版真实接入
+- ECH 第一版真实接入
 
 ---
 
-## A 阶段已补强内容
+## A2：ECH 当前实现说明
 
-### 已新增
-- 更完整的管理页
-- `GET /{路径}/api/status` 状态诊断接口
-- 配置保存前校验
-- 请求 ID 响应头 `x-request-id`
-- 客户端快速链接接口 `GET /{路径}/api/clients`
-- 配置导入/导出接口
-- 部署专用 `edgeone.json`
-- `.env.edgeone.example`
-- xhttp 第一版服务端接入
+这次不是“只加一个开关”，而是补了一套真实可用的 ECH 第一版：
 
-### 当前仍然不做伪实现
-- ECH：若未真正补齐获取/缓存/下发链路，也会是伪实现
+### 已实现
+- 新增配置项：`echDomain`
+- `ech=yes` 时，VLESS / Trojan / xhttp 节点会附带：
+  - `ech=${echDomain}+${doh}`
+- 订阅接口会返回诊断响应头：
+  - `X-ECH-Status`
+  - `X-ECH-Domain`
+  - `X-ECH-DoH`
+  - `X-ECH-Detail`
+- 状态接口会返回 ECH 诊断结果
+- 管理页会显示 ECH 状态 / 域名 / DoH / 说明
 
-所以这个分支的原则是：**先交付 EdgeOne 上真实可跑的能力，再继续迭代协议层。**
+### 诊断逻辑
+- 会使用你配置的 `doh`
+- 以 `type=65` 查询你配置的 `echDomain`
+- 尝试在返回文本中识别：
+  - `ech=`
+  - `echconfig`
+  - `echconfiglist`
+
+### 当前限制
+- 这是第一版 ECH 真实接入，重点是：
+  - 节点参数真实下发
+  - DoH 真实检测
+  - 响应头/状态页真实反馈
+- 还没有做更重的：
+  - 多 DoH 自动切换
+  - ECH 结果缓存
+  - 更细颗粒度结构化解析
 
 ---
 
@@ -71,94 +89,66 @@
 - `s` 覆盖 SOCKS5
 - `rm=no` 关闭地区智能匹配
 - `qj=no` 开启 direct -> SOCKS5 -> fallback 的降级链路
-
-### 暂未实现
-- ECH 自动拉取与下发
-- 原项目那套完整前端图形化大界面
-- Cloudflare 专属 `request.cf` 行为
-
----
-
-## xhttp 当前实现说明
-
-这次不是“只生成 xhttp 链接”，而是做了第一版真实服务端接入：
-
-- 订阅生成时，`ex=yes` 会生成 `type=xhttp` 的 VLESS 节点
-- 服务端接收 `POST` 请求体
-- 解析 VLESS 头后，建立 TCP 出站连接
-- 将请求体剩余数据继续上传到远端
-- 将远端返回数据以流式响应回传客户端
-- 复用已有的：
-  - ProxyIP 覆盖
-  - SOCKS5 降级
-  - fallback 逻辑
-
-### 当前限制
-- 暂只支持 TCP，不支持 UDP
-- xhttp 为第一版真实接入，建议先小范围验证客户端兼容性
-- 推荐先配合 sing-box / v2ray-core 系客户端测试
+- `ech=yes` 后对 VLESS / Trojan / xhttp 节点下发 ECH 参数
+- 订阅和状态接口返回 ECH 诊断
 
 ---
 
 ## 部署方式
 
-### 1. 用 EdgeOne Pages 导入这个分支
-仓库分支选择：`edgeone`
-
-### 2. 绑定 KV
-在 EdgeOne Pages 控制台绑定 KV Namespace：
-
-- 推荐变量名：`C`
-- 兼容变量名：`my_kv`
-
-### 3. 设置环境变量
-至少建议设置：
-
+### 环境变量新增
 | 变量 | 说明 |
 | --- | --- |
-| `u` | 你的 UUID，必填，作为访问路径和鉴权用户 |
-| `d` | 自定义路径，可选，例如 `/mypath` |
-| `p` | 默认 ProxyIP，可选 |
-| `s` | 默认 SOCKS5，可选，格式 `user:pass@host:port` 或 `host:port` |
-| `wk` | 默认地区，可选，例如 `HK` / `JP` / `SG` |
-| `ev` | 是否启用 VLESS，默认 `yes` |
-| `et` | 是否启用 Trojan，默认 `no` |
-| `ex` | 是否启用 xhttp，默认 `no` |
-| `ae` | 是否允许 API 管理优选 IP，默认 `no` |
-| `qj` | 设为 `no` 启用 direct -> SOCKS -> fallback |
+| `ech` | 是否启用 ECH，默认 `no` |
+| `echDomain` | ECH 目标域名，默认 `cloudflare-ech.com` |
 | `doh` | DoH 地址，默认 `https://dns.google/dns-query` |
-| `scu` | 订阅转换服务，默认 `https://url.v1.mk/sub` |
 
-也可直接参考仓库根目录：
+例如：
 
-- `.env.edgeone.example`
+```env
+ech=yes
+echDomain=cloudflare-ech.com
+doh=https://dns.google/dns-query
+```
 
 ---
 
 ## API 示例
 
-### 查看客户端链接
+### 查看 ECH 状态
 ```bash
-curl "https://your-domain/{UUID或路径}/api/clients"
+curl "https://your-domain/{UUID或路径}/api/status"
 ```
 
-返回中会包含：
-- `raw`
-- `converterBase`
-- `xhttpPath`
-- 各客户端快速链接
+你会在返回 JSON 里看到：
+- `ech.status`
+- `ech.domain`
+- `ech.doh`
+- `ech.detail`
+
+### 查看订阅响应头里的 ECH 信息
+```bash
+curl -I "https://your-domain/{UUID或路径}/sub"
+```
+
+你会看到：
+- `X-ECH-Status`
+- `X-ECH-Domain`
+- `X-ECH-DoH`
+- `X-ECH-Detail`
 
 ---
 
-## 建议你的上线顺序
+## 建议你的测试顺序
 
-1. 先只配置 `u`
-2. 部署成功后访问 `/{u}`
-3. 打开管理页确认配置读写正常
-4. 再开启 `ae=yes`
-5. 再加 `qj=no` 和 `s=` 做降级
-6. 再验证 `api/clients` 和 `api/export`
-7. 最后开启 `ex=yes` 测 xhttp
+1. 先部署并确保 `/api/status` 正常
+2. 设置：
+   - `ech=yes`
+   - `echDomain=cloudflare-ech.com`
+   - `doh=https://dns.google/dns-query`
+3. 查看 `/api/status` 中 `ech.status`
+4. 查看 `/sub` 响应头中的 `X-ECH-*`
+5. 再用 sing-box / v2ray-core 系客户端验证节点
 
 ---
 
@@ -172,6 +162,7 @@ curl "https://your-domain/{UUID或路径}/api/clients"
 - 能提供订阅
 - 能跑 WebSocket 隧道
 - 能跑 xhttp 第一版
+- 能跑 ECH 第一版
 - 能做基础运维与备份恢复
 
 的 **第一版可部署 EdgeOne 实现**。

@@ -1,6 +1,6 @@
 import { loadConfig, publicConfig, saveConfig } from './config.js';
 import { renderDashboard, renderHealthPage } from './html.js';
-import { buildClientLinks, generateBase64Subscription } from './subscription.js';
+import { buildClientLinks, generateBase64Subscription, inspectECH } from './subscription.js';
 import { getKV, kvDelete, kvGetJson, kvPutJson, PREFERRED_IPS_KEY } from './store.js';
 import {
   detectRegion,
@@ -59,8 +59,9 @@ function withRequestId(response, requestId) {
   });
 }
 
-function buildStatus(request, config, context) {
+async function buildStatus(request, config, context) {
   const url = new URL(request.url);
+  const echInfo = await inspectECH(config);
   return {
     requestId: getRequestId(request),
     host: url.host,
@@ -71,10 +72,12 @@ function buildStatus(request, config, context) {
     customPath: config.d || '',
     socksEnabled: Boolean(config.s),
     kvBound: Boolean(getKV(context)),
+    ech: echInfo,
     features: {
       vless: isEnabled(config.ev, true),
       trojan: isEnabled(config.et, false),
       xhttp_configured: isEnabled(config.ex, false),
+      ech_enabled: isEnabled(config.ech, false),
       api_manage: isEnabled(config.ae, false),
       region_match: isEnabled(config.rm, true),
       fallback_chain: String(config.qj || 'yes').toLowerCase() === 'no',
@@ -115,14 +118,19 @@ export async function handleRequest(context) {
 
   if (pathname === routes.subPath && request.method === 'GET') {
     const content = await generateBase64Subscription(request, context, config);
+    const echInfo = await inspectECH(config);
     return withRequestId(textResponse(content, 200, {
       'cache-control': 'no-store, no-cache, must-revalidate, max-age=0',
+      'x-ech-status': echInfo.status,
+      'x-ech-domain': echInfo.domain || '',
+      'x-ech-doh': echInfo.doh || '',
+      'x-ech-detail': echInfo.detail || '',
     }), requestId);
   }
 
   if (pathname === routes.statusApiPath && request.method === 'GET') {
     return withRequestId(jsonResponse({
-      ...buildStatus(request, config, context),
+      ...(await buildStatus(request, config, context)),
       requestId,
     }), requestId);
   }

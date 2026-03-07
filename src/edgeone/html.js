@@ -124,7 +124,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
 
       <section class="card full">
         <h2>配置 JSON</h2>
-        <div class="muted">可直接编辑后保存。常用字段：<code>u</code>、<code>d</code>、<code>p</code>、<code>s</code>、<code>wk</code>、<code>ev</code>、<code>et</code>、<code>yx</code>、<code>yxURL</code>、<code>ae</code>、<code>qj</code>、<code>doh</code>。</div>
+        <div class="muted">可直接编辑后保存。常用字段：<code>u</code>、<code>d</code>、<code>p</code>、<code>s</code>、<code>wk</code>、<code>ev</code>、<code>et</code>、<code>ex</code>、<code>ech</code>、<code>echDomain</code>、<code>yx</code>、<code>yxURL</code>、<code>ae</code>、<code>qj</code>、<code>doh</code>。</div>
         <textarea id="configBox">${configJson}</textarea>
         <div class="row" style="margin-top: 12px;">
           <button onclick="saveConfig()">保存配置</button>
@@ -164,12 +164,15 @@ WebSocket：${url.origin}/?ed=2048</pre>
           <span class="pill">wk = 地区</span>
           <span class="pill">ev = VLESS</span>
           <span class="pill">et = Trojan</span>
+          <span class="pill">ex = xhttp</span>
+          <span class="pill">ech = 开启 ECH</span>
+          <span class="pill">echDomain = ECH 目标域名</span>
           <span class="pill">ae = API 管理</span>
           <span class="pill">qj = 降级链路</span>
           <span class="pill">doh = DNS over HTTPS</span>
           <span class="pill">scu = 订阅转换服务</span>
         </div>
-        <div class="tips">说明：当前分支优先保证 EdgeOne 平台上的可用性，因此已实现真实可运行的 WebSocket/TCP/KV/DoH 方案；xhttp 与 ECH 需要额外协议链路，当前未做伪实现。</div>
+        <div class="tips">说明：ECH 第一版已接入真实参数下发和 DoH 诊断。开启 <code>ech=yes</code> 后，生成的 VLESS / Trojan / xhttp 节点会附带 <code>ech</code> 参数，状态接口和订阅响应头会给出诊断结果。</div>
       </section>
     </div>
   </div>
@@ -198,6 +201,7 @@ WebSocket：${url.origin}/?ed=2048</pre>
     function renderStatus(data) {
       const status = document.getElementById('statusBox');
       const featureEntries = Object.entries(data.features || {});
+      const ech = data.ech || {};
       const rows = [
         ['路由基址', data.routeBase],
         ['地区判定', data.region || '-'],
@@ -207,6 +211,10 @@ WebSocket：${url.origin}/?ed=2048</pre>
         ['ProxyIP', data.proxyIP || '<span class="warn">未设置</span>'],
         ['SOCKS5', data.socksEnabled ? '<span class="ok">已启用</span>' : '<span class="warn">未启用</span>'],
         ['自定义路径', data.customPath || '<span class="warn">未设置</span>'],
+        ['ECH 状态', ech.status || '-'],
+        ['ECH 域名', ech.domain || '-'],
+        ['ECH DoH', ech.doh || '-'],
+        ['ECH 说明', esc(ech.detail || '-')],
       ];
 
       const featureHtml = featureEntries.map(([k, v]) => {
@@ -230,6 +238,8 @@ WebSocket：${url.origin}/?ed=2048</pre>
       box.innerHTML =
         '<div class="tips">原始订阅：<code>' + esc(data.raw || '') + '</code></div>' +
         '<div class="tips">转换服务：<code>' + esc(data.converterBase || '') + '</code></div>' +
+        '<div class="tips">xhttp 路径：<code>' + esc(data.xhttpPath || '') + '</code></div>' +
+        '<div class="tips">ECH：<code>' + (data.echEnabled ? 'enabled' : 'disabled') + '</code> / 目标域名：<code>' + esc(data.echDomain || '') + '</code></div>' +
         '<table style="margin-top:12px;">' +
         entries.map(function (entry) {
           const name = entry[0];
